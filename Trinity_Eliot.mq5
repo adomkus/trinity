@@ -1,11 +1,11 @@
 //+------------------------------------------------------------------+
 //|                                     Trinity_Eliot_Pro.mq5 |
 //|                             Copyright 2025, Gemini AI Labs      |
-//|                                     Version 2.0 (Final)          |
+//|                                     Version 2.2 (Final Fix)      |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, Gemini AI Labs"
 #property link      "https"
-#property version   "2.0"
+#property version   "2.2"
 #property description "Profesionalus Elioto Bangų indikatorius su ZigZag, balų sistema ir ABC prognoze."
 
 #property indicator_chart_window
@@ -15,6 +15,29 @@
 //--- Įtraukiame reikalingas bibliotekas
 #include <Object.mqh>
 #include <Arrays\ArrayObj.mqh>
+
+//--- Indikatoriaus Įvesties Parametrai ---
+input group "ZigZag Settings"
+input int    InpZigZagDepth      = 12;     // Periodas piko/dugno paieškai
+input int    InpZigZagDeviation  = 5;      // Minimalus piko/dugno dydis (punktais)
+input int    InpZigZagBackstep   = 3;      // Minimalus atstumas tarp pikų/dugnų
+
+input group "History & Performance"
+input int    InpMaxBars          = 2000;   // Kiek žvakių analizuoti atgal
+
+input group "Pattern Scoring Weights"
+input double InpWeightFib        = 1.0;    // Fibonacci santykių svoris
+input double InpWeightRSI        = 1.5;    // RSI divergencijos svoris
+input int    InpRSI_Period       = 14;     // RSI periodas
+
+input group "Drawing & Filtering"
+input color  InpImpulseColor     = clrDodgerBlue;
+input color  InpCorrectionColor  = clrOrangeRed;
+input ENUM_LINE_STYLE InpStyle   = STYLE_SOLID;
+input int    InpWidth            = 2;
+input double InpMinScore         = 40.0;   // Minimalus balas modeliui piešti
+input int    InpMaxPatterns      = 3;      // Kiek daugiausiai modelių piešti
+
 
 //+------------------------------------------------------------------+
 //| Klasė, aprašanti vieną piko/dugno tašką (ekstremumą)             |
@@ -43,11 +66,11 @@ public:
              CWavePattern(void) { ArrayInitialize(points, NULL); score = 0; is_bullish = false; pattern_id = 0; }
             ~CWavePattern(void) { for(int i=0; i<9; i++) if(CheckPointer(points[i])==POINTER_DYNAMIC) delete points[i]; }
 
-    virtual int Compare(const CObject *node, const int mode=0) const override
+    virtual int Compare(const CObject *node, const int mode=0) const
     {
         const CWavePattern *other = (const CWavePattern*)node;
-        if(this.score < other.score) return -1;
-        if(this.score > other.score) return 1;
+        if(score < other->score) return -1;
+        if(score > other->score) return 1;
         return 0;
     }
 
@@ -65,19 +88,14 @@ public:
 class CElliottWaveIndicator
 {
 private:
-    //--- Piešimo valdymas
     string   m_prefix;
-    int      m_chart_id;
+    long     m_chart_id;
     int      m_last_calc_bars;
-
-    //--- Indikatorių handles
     int      h_rsi;
 
-    //--- Vidiniai duomenys
-    CArrayObj *m_patterns;
-    CArrayObj *m_zigzag_pivots;
+    CArrayObj m_patterns;
+    CArrayObj m_zigzag_pivots;
 
-    //--- Pagrindinės logikos funkcijos
     void     FindZigZagPivots(const int rates_total, const double &high[], const double &low[], const datetime &time[]);
     void     FindWavePatterns(void);
     bool     ValidateElliottRules(CWavePattern *pattern);
@@ -88,28 +106,6 @@ private:
     void     CleanupObjects(void);
 
 public:
-    //--- Įvesties parametrai
-    input group "ZigZag Settings"
-    input int    InpZigZagDepth      = 12;     // Periodas piko/dugno paieškai
-    input int    InpZigZagDeviation  = 5;      // Minimalus piko/dugno dydis (punktais)
-    input int    InpZigZagBackstep   = 3;      // Minimalus atstumas tarp pikų/dugnų
-
-    input group "History & Performance"
-    input int    InpMaxBars          = 2000;   // Kiek žvakių analizuoti atgal
-
-    input group "Pattern Scoring Weights"
-    input double InpWeightFib        = 1.0;    // Fibonacci santykių svoris
-    input double InpWeightRSI        = 1.5;    // RSI divergencijos svoris
-    input int    InpRSI_Period       = 14;     // RSI periodas
-
-    input group "Drawing & Filtering"
-    input color  InpImpulseColor     = clrDodgerBlue;
-    input color  InpCorrectionColor  = clrOrangeRed;
-    input ENUM_LINE_STYLE InpStyle   = STYLE_SOLID;
-    input int    InpWidth            = 2;
-    input double InpMinScore         = 40.0;   // Minimalus balas modeliui piešti
-    input int    InpMaxPatterns      = 3;      // Kiek daugiausiai modelių piešti
-
              CElliottWaveIndicator(void);
             ~CElliottWaveIndicator(void);
 
@@ -122,28 +118,21 @@ CElliottWaveIndicator g_ew_indicator;
 
 //--- Implementacija ---
 
-CElliottWaveIndicator::CElliottWaveIndicator(void) : m_last_calc_bars(0)
-{
-    m_patterns = new CArrayObj();
-    m_zigzag_pivots = new CArrayObj();
-}
-
-CElliottWaveIndicator::~CElliottWaveIndicator(void)
-{
-    if(CheckPointer(m_patterns) == POINTER_DYNAMIC) delete m_patterns;
-    if(CheckPointer(m_zigzag_pivots) == POINTER_DYNAMIC) delete m_zigzag_pivots;
-}
+CElliottWaveIndicator::CElliottWaveIndicator(void) : m_last_calc_bars(0) {}
+CElliottWaveIndicator::~CElliottWaveIndicator(void) {}
 
 int CElliottWaveIndicator::OnInit(void)
 {
     m_chart_id = ChartID();
-    m_prefix = "EW_Pro_" + IntegerToString(m_chart_id) + "_";
+    m_prefix = "EW_Pro_" + (string)m_chart_id + "_";
     m_last_calc_bars = 0;
 
     h_rsi = iRSI(_Symbol, _Period, InpRSI_Period, PRICE_CLOSE);
     if(h_rsi == INVALID_HANDLE) { Print("Nepavyko sukurti RSI handle."); }
 
     IndicatorSetString(INDICATOR_SHORTNAME, "ElliottWave Pro");
+    m_patterns.FreeMode(true);
+    m_zigzag_pivots.FreeMode(true);
     return(INIT_SUCCEEDED);
 }
 
@@ -155,12 +144,11 @@ void CElliottWaveIndicator::OnDeinit(const int reason)
 
 int CElliottWaveIndicator::OnCalculate(const int rates_total, const int prev_calculated, const datetime &time[], const double &open[], const double &high[], const double &low[], const double &close[], const long &tick_volume[], const long &volume[], const int &spread[])
 {
-    if(rates_total < InpMaxBars && rates_total < 200) return 0;
+    if(rates_total < 200) return 0;
 
-    int calculated = rates_total - prev_calculated;
-    if(calculated < 2) // Optimizacija, kad neperskaičiuotų kiekvieną tiką
+    if(rates_total == m_last_calc_bars && prev_calculated > 0)
     {
-        // Ateityje galima pridėti realaus laiko paskutinio taško atnaujinimą
+       return(rates_total);
     }
 
     m_last_calc_bars = rates_total;
@@ -174,14 +162,7 @@ int CElliottWaveIndicator::OnCalculate(const int rates_total, const int prev_cal
 
 void CElliottWaveIndicator::FindZigZagPivots(const int rates_total, const double &high[], const double &low[], const datetime &time[])
 {
-    m_zigzag_pivots->FreeMode(false);
-    for(int i = m_zigzag_pivots->Total() - 1; i >= 0; i--)
-    {
-        CPoint *pt = m_zigzag_pivots->At(i);
-        if(CheckPointer(pt) == POINTER_DYNAMIC) delete pt;
-    }
-    m_zigzag_pivots->Clear();
-    m_zigzag_pivots->FreeMode(true);
+    m_zigzag_pivots.Clear();
 
     if(rates_total < InpZigZagDepth) return;
 
@@ -258,35 +239,28 @@ void CElliottWaveIndicator::FindZigZagPivots(const int rates_total, const double
     {
         if(zigzag_buffer[i] != 0.0)
         {
-            if(m_zigzag_pivots->Total() > 0)
+            if(m_zigzag_pivots.Total() > 0)
             {
-                CPoint *last_pt = (CPoint*)m_zigzag_pivots->At(m_zigzag_pivots->Total()-1);
+                CPoint *last_pt = (CPoint*)m_zigzag_pivots.At(m_zigzag_pivots.Total()-1);
                 if(last_pt->bar == i) continue;
             }
-            m_zigzag_pivots->Add(new CPoint(i, time[i], zigzag_buffer[i]));
+            m_zigzag_pivots.Add(new CPoint(i, time[i], zigzag_buffer[i]));
         }
     }
 }
 
 void CElliottWaveIndicator::FindWavePatterns(void)
 {
-    m_patterns->FreeMode(false);
-    for(int i = m_patterns->Total() - 1; i >= 0; i--)
-    {
-        CWavePattern *p = m_patterns->At(i);
-        if(CheckPointer(p) == POINTER_DYNAMIC) delete p;
-    }
-    m_patterns->Clear();
-    m_patterns->FreeMode(true);
+    m_patterns.Clear();
 
-    if(m_zigzag_pivots->Total() < 6) return;
+    if(m_zigzag_pivots.Total() < 6) return;
 
-    for(int i = 0; i <= m_zigzag_pivots->Total() - 6; i++)
+    for(int i = 0; i <= m_zigzag_pivots.Total() - 6; i++)
     {
         CWavePattern *pattern = new CWavePattern();
         for(int j=0; j<6; j++)
         {
-            CPoint *p = (CPoint*)m_zigzag_pivots->At(i+j);
+            CPoint *p = (CPoint*)m_zigzag_pivots.At(i+j);
             pattern->SetPoint(j, p->bar, p->time, p->price);
         }
 
@@ -294,7 +268,7 @@ void CElliottWaveIndicator::FindWavePatterns(void)
         {
             pattern->score = CalculatePatternScore(pattern);
             CalculateABCProjection(pattern);
-            m_patterns->Add(pattern);
+            m_patterns.Add(pattern);
         }
         else
         {
@@ -413,12 +387,12 @@ void CElliottWaveIndicator::CalculateABCProjection(CWavePattern *pattern)
 void CElliottWaveIndicator::DrawManager(void)
 {
     CleanupObjects();
-    m_patterns->Sort();
+    m_patterns.Sort();
 
     int drawn_count = 0;
-    for(int i = m_patterns->Total() - 1; i >= 0 && drawn_count < InpMaxPatterns; i--)
+    for(int i = m_patterns.Total() - 1; i >= 0 && drawn_count < InpMaxPatterns; i--)
     {
-        CWavePattern *pattern = m_patterns->At(i);
+        CWavePattern *pattern = (CWavePattern*)m_patterns.At(i);
         if(pattern == NULL || pattern->score < InpMinScore) continue;
 
         pattern->pattern_id = drawn_count;
@@ -433,6 +407,7 @@ void CElliottWaveIndicator::DrawPattern(CWavePattern *pattern)
 
     string id_str = IntegerToString(pattern->pattern_id);
 
+    // Piešiame 5 impulsines bangas
     for(int i = 0; i < 5; i++)
     {
         if(pattern->points[i] == NULL || pattern->points[i+1] == NULL) continue;
@@ -444,13 +419,14 @@ void CElliottWaveIndicator::DrawPattern(CWavePattern *pattern)
         ObjectSetInteger(m_chart_id, name, OBJPROP_WIDTH, InpWidth);
 
         string label_name = m_prefix + "ImpulseLabel_" + id_str + "_" + IntegerToString(i+1);
-        bool is_peak = (i%2 != 0);
+        bool is_peak = ((i+1)%2 != 0) == pattern->is_bullish;
         ObjectCreate(m_chart_id, label_name, OBJ_TEXT, 0, pattern->points[i+1]->time, pattern->points[i+1]->price);
         ObjectSetString(m_chart_id, label_name, OBJPROP_TEXT, IntegerToString(i+1));
         ObjectSetInteger(m_chart_id, label_name, OBJPROP_COLOR, InpImpulseColor);
-        ObjectSetInteger(m_chart_id, label_name, OBJPROP_ANCHOR, is_peak ? ANCHOR_LEFT_UPPER : ANCHOR_LEFT_LOWER);
+        ObjectSetInteger(m_chart_id, label_name, OBJPROP_ANCHOR, is_peak ? ANCHOR_TOP : ANCHOR_BOTTOM);
     }
 
+    // Piešiame 3 korekcines bangas (prognozę)
     string abc[] = {"A", "B", "C"};
     for(int i = 5; i < 8; i++)
     {
@@ -463,11 +439,15 @@ void CElliottWaveIndicator::DrawPattern(CWavePattern *pattern)
         ObjectSetInteger(m_chart_id, name, OBJPROP_WIDTH, InpWidth);
 
         string label_name = m_prefix + "CorrectionLabel_" + id_str + "_" + abc[i-5];
-        bool is_peak = (i==6) ? false : true;
+        bool is_peak;
+        // B taškas (i=6) yra pikas bulių trende, C ir A (i=5,7) - dugnai
+        if(i == 6) is_peak = pattern->is_bullish;
+        else is_peak = !pattern->is_bullish;
+
         ObjectCreate(m_chart_id, label_name, OBJ_TEXT, 0, pattern->points[i+1]->time, pattern->points[i+1]->price);
         ObjectSetString(m_chart_id, label_name, OBJPROP_TEXT, abc[i-5]);
         ObjectSetInteger(m_chart_id, label_name, OBJPROP_COLOR, InpCorrectionColor);
-        ObjectSetInteger(m_chart_id, label_name, OBJPROP_ANCHOR, is_peak ? ANCHOR_LEFT_UPPER : ANCHOR_LEFT_LOWER);
+        ObjectSetInteger(m_chart_id, label_name, OBJPROP_ANCHOR, is_peak ? ANCHOR_TOP : ANCHOR_BOTTOM);
     }
 }
 

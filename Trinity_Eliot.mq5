@@ -1,11 +1,11 @@
 //+------------------------------------------------------------------+
 //|                                     Trinity_Eliot_Pro.mq5 |
 //|                             Copyright 2025, Gemini AI Labs      |
-//|                                     Version 2.2 (Final Fix)      |
+//|                                     Version 2.3 (Final Compiled) |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, Gemini AI Labs"
 #property link      "https"
-#property version   "2.2"
+#property version   "2.3"
 #property description "Profesionalus Elioto Bangų indikatorius su ZigZag, balų sistema ir ABC prognoze."
 
 #property indicator_chart_window
@@ -58,27 +58,60 @@ public:
 class CWavePattern : public CObject
 {
 public:
-    CPoint   *points[9]; // 0-1-2-3-4-5-A-B-C
+    CPoint   *p0, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8;
     bool     is_bullish;
     double   score;
-    int      pattern_id; // Unikalus ID piešimui
+    int      pattern_id;
 
-             CWavePattern(void) { ArrayInitialize(points, NULL); score = 0; is_bullish = false; pattern_id = 0; }
-            ~CWavePattern(void) { for(int i=0; i<9; i++) if(CheckPointer(points[i])==POINTER_DYNAMIC) delete points[i]; }
+             CWavePattern(void) { Initialize(); }
+            ~CWavePattern(void) { Cleanup(); }
+
+    void Initialize()
+    {
+        p0 = p1 = p2 = p3 = p4 = p5 = p6 = p7 = p8 = NULL;
+        score = 0; is_bullish = false; pattern_id = 0;
+    }
+
+    void Cleanup()
+    {
+        if(CheckPointer(p0)==POINTER_DYNAMIC) delete p0;
+        if(CheckPointer(p1)==POINTER_DYNAMIC) delete p1;
+        if(CheckPointer(p2)==POINTER_DYNAMIC) delete p2;
+        if(CheckPointer(p3)==POINTER_DYNAMIC) delete p3;
+        if(CheckPointer(p4)==POINTER_DYNAMIC) delete p4;
+        if(CheckPointer(p5)==POINTER_DYNAMIC) delete p5;
+        if(CheckPointer(p6)==POINTER_DYNAMIC) delete p6;
+        if(CheckPointer(p7)==POINTER_DYNAMIC) delete p7;
+        if(CheckPointer(p8)==POINTER_DYNAMIC) delete p8;
+    }
 
     virtual int Compare(const CObject *node, const int mode=0) const
     {
         const CWavePattern *other = (const CWavePattern*)node;
-        if(score < other->score) return -1;
-        if(score > other->score) return 1;
+        if(this.score < other->score) return -1;
+        if(this.score > other->score) return 1;
         return 0;
     }
 
-    void     SetPoint(int index, int bar, datetime time, double price)
+    void SetPoint(int index, int bar, datetime time, double price)
     {
-        if(index < 0 || index >= 9) return;
-        if(CheckPointer(points[index])==POINTER_DYNAMIC) delete points[index];
-        points[index] = new CPoint(bar, time, price);
+        CPoint **point_ptr = NULL;
+        switch(index)
+        {
+            case 0: point_ptr = &p0; break;
+            case 1: point_ptr = &p1; break;
+            case 2: point_ptr = &p2; break;
+            case 3: point_ptr = &p3; break;
+            case 4: point_ptr = &p4; break;
+            case 5: point_ptr = &p5; break;
+            case 6: point_ptr = &p6; break;
+            case 7: point_ptr = &p7; break;
+            case 8: point_ptr = &p8; break;
+            default: return;
+        }
+
+        if(CheckPointer(*point_ptr)==POINTER_DYNAMIC) delete *point_ptr;
+        *point_ptr = new CPoint(bar, time, price);
     }
 };
 
@@ -242,7 +275,7 @@ void CElliottWaveIndicator::FindZigZagPivots(const int rates_total, const double
             if(m_zigzag_pivots.Total() > 0)
             {
                 CPoint *last_pt = (CPoint*)m_zigzag_pivots.At(m_zigzag_pivots.Total()-1);
-                if(last_pt->bar == i) continue;
+                if(last_pt != NULL && last_pt->bar == i) continue;
             }
             m_zigzag_pivots.Add(new CPoint(i, time[i], zigzag_buffer[i]));
         }
@@ -258,11 +291,15 @@ void CElliottWaveIndicator::FindWavePatterns(void)
     for(int i = 0; i <= m_zigzag_pivots.Total() - 6; i++)
     {
         CWavePattern *pattern = new CWavePattern();
+        bool points_ok = true;
         for(int j=0; j<6; j++)
         {
             CPoint *p = (CPoint*)m_zigzag_pivots.At(i+j);
+            if(p == NULL) { points_ok=false; break; }
             pattern->SetPoint(j, p->bar, p->time, p->price);
         }
+
+        if(!points_ok) { delete pattern; continue; }
 
         if(ValidateElliottRules(pattern))
         {
@@ -279,35 +316,33 @@ void CElliottWaveIndicator::FindWavePatterns(void)
 
 bool CElliottWaveIndicator::ValidateElliottRules(CWavePattern *pattern)
 {
-    if(pattern == NULL || pattern->points[5] == NULL) return false;
+    if(pattern == NULL || pattern->p5 == NULL || pattern->p4 == NULL || pattern->p3 == NULL || pattern->p2 == NULL || pattern->p1 == NULL || pattern->p0 == NULL)
+        return false;
 
-    CPoint *p0 = pattern->points[0], *p1 = pattern->points[1], *p2 = pattern->points[2],
-           *p3 = pattern->points[3], *p4 = pattern->points[4], *p5 = pattern->points[5];
+    pattern->is_bullish = pattern->p1->price > pattern->p0->price;
 
-    pattern->is_bullish = p1->price > p0->price;
+    if(pattern->is_bullish && pattern->p2->price < pattern->p0->price) return false;
+    if(!pattern->is_bullish && pattern->p2->price > pattern->p0->price) return false;
 
-    if(pattern->is_bullish && p2->price < p0->price) return false;
-    if(!pattern->is_bullish && p2->price > p0->price) return false;
+    if(pattern->is_bullish && pattern->p4->price < pattern->p1->price) return false;
+    if(!pattern->is_bullish && pattern->p4->price > pattern->p1->price) return false;
 
-    if(pattern->is_bullish && p4->price < p1->price) return false;
-    if(!pattern->is_bullish && p4->price > p1->price) return false;
-
-    double w1_len = MathAbs(p1->price - p0->price);
-    double w3_len = MathAbs(p3->price - p2->price);
-    double w5_len = MathAbs(p5->price - p4->price);
+    double w1_len = MathAbs(pattern->p1->price - pattern->p0->price);
+    double w3_len = MathAbs(pattern->p3->price - pattern->p2->price);
+    double w5_len = MathAbs(pattern->p5->price - pattern->p4->price);
 
     if(w3_len < w1_len && w3_len < w5_len) return false;
 
     if(pattern->is_bullish)
     {
-        if(!(p1->price > p0->price && p2->price < p1->price && p3->price > p1->price &&
-             p4->price < p3->price && p5->price > p3->price && p3->price > p1->price))
+        if(!(pattern->p1->price > pattern->p0->price && pattern->p2->price < pattern->p1->price && pattern->p3->price > pattern->p1->price &&
+             pattern->p4->price < pattern->p3->price && pattern->p5->price > pattern->p3->price && pattern->p3->price > pattern->p1->price))
             return false;
     }
     else
     {
-        if(!(p1->price < p0->price && p2->price > p1->price && p3->price < p1->price &&
-             p4->price > p3->price && p5->price < p3->price && p3->price < p1->price))
+        if(!(pattern->p1->price < pattern->p0->price && pattern->p2->price > pattern->p1->price && pattern->p3->price < pattern->p1->price &&
+             pattern->p4->price > pattern->p3->price && pattern->p5->price < pattern->p3->price && pattern->p3->price < pattern->p1->price))
             return false;
     }
 
@@ -316,29 +351,27 @@ bool CElliottWaveIndicator::ValidateElliottRules(CWavePattern *pattern)
 
 double CElliottWaveIndicator::CalculatePatternScore(CWavePattern *pattern)
 {
-    if(pattern == NULL || pattern->points[5] == NULL) return 0.0;
+    if(pattern == NULL || pattern->p5 == NULL || pattern->p4 == NULL || pattern->p3 == NULL || pattern->p2 == NULL || pattern->p1 == NULL || pattern->p0 == NULL)
+        return 0.0;
 
     double score_fib = 0.0, score_rsi = 0.0;
 
-    CPoint *p0=pattern->points[0], *p1=pattern->points[1], *p2=pattern->points[2],
-           *p3=pattern->points[3], *p4=pattern->points[4], *p5=pattern->points[5];
-
-    double w1_len = MathAbs(p1->price - p0->price);
+    double w1_len = MathAbs(pattern->p1->price - pattern->p0->price);
     if(w1_len > 0)
     {
-        double w2_retracement = MathAbs(p2->price - p1->price) / w1_len;
+        double w2_retracement = MathAbs(pattern->p2->price - pattern->p1->price) / w1_len;
         if(w2_retracement >= 0.5 && w2_retracement <= 0.618) score_fib += 35;
         else if(w2_retracement >= 0.382 && w2_retracement <= 0.786) score_fib += 15;
 
-        double w3_extension = MathAbs(p3->price - p2->price) / w1_len;
+        double w3_extension = MathAbs(pattern->p3->price - pattern->p2->price) / w1_len;
         if(w3_extension >= 1.618) score_fib += 30;
         if(w3_extension >= 2.618) score_fib += 10;
     }
 
-    double w3_len = MathAbs(p3->price - p2->price);
+    double w3_len = MathAbs(pattern->p3->price - pattern->p2->price);
     if(w3_len > 0)
     {
-        double w4_retracement = MathAbs(p4->price - p3->price) / w3_len;
+        double w4_retracement = MathAbs(pattern->p4->price - pattern->p3->price) / w3_len;
         if(w4_retracement >= 0.382 && w4_retracement <= 0.5) score_fib += 20;
     }
 
@@ -347,11 +380,11 @@ double CElliottWaveIndicator::CalculatePatternScore(CWavePattern *pattern)
         double rsi_buffer[];
         if(CopyBuffer(h_rsi, 0, 0, m_last_calc_bars, rsi_buffer) > 0)
         {
-            double rsi3 = rsi_buffer[p3->bar];
-            double rsi5 = rsi_buffer[p5->bar];
+            double rsi3 = rsi_buffer[pattern->p3->bar];
+            double rsi5 = rsi_buffer[pattern->p5->bar];
 
-            if(pattern->is_bullish && p5->price > p3->price && rsi5 < rsi3) score_rsi += 40;
-            if(!pattern->is_bullish && p5->price < p3->price && rsi5 > rsi3) score_rsi += 40;
+            if(pattern->is_bullish && pattern->p5->price > pattern->p3->price && rsi5 < rsi3) score_rsi += 40;
+            if(!pattern->is_bullish && pattern->p5->price < pattern->p3->price && rsi5 > rsi3) score_rsi += 40;
         }
     }
 
@@ -360,22 +393,19 @@ double CElliottWaveIndicator::CalculatePatternScore(CWavePattern *pattern)
 
 void CElliottWaveIndicator::CalculateABCProjection(CWavePattern *pattern)
 {
-    if(pattern == NULL || pattern->points[5] == NULL) return;
+    if(pattern == NULL || pattern->p5 == NULL || pattern->p4 == NULL) return;
 
-    CPoint *p4 = pattern->points[4];
-    CPoint *p5 = pattern->points[5];
+    double wave_5_len = MathAbs(pattern->p5->price - pattern->p4->price);
 
-    double wave_5_len = MathAbs(p5->price - p4->price);
-
-    double price_A = pattern->is_bullish ? p5->price - wave_5_len * 0.618 : p5->price + wave_5_len * 0.618;
-    int bar_A = p5->bar + (p5->bar - p4->bar);
-    datetime time_A = p5->time + (p5->time - p4->time);
+    double price_A = pattern->is_bullish ? pattern->p5->price - wave_5_len * 0.618 : pattern->p5->price + wave_5_len * 0.618;
+    int bar_A = pattern->p5->bar + (pattern->p5->bar - pattern->p4->bar);
+    datetime time_A = pattern->p5->time + (pattern->p5->time - pattern->p4->time);
     pattern->SetPoint(6, bar_A, time_A, price_A);
 
-    double wave_A_len = MathAbs(price_A - p5->price);
+    double wave_A_len = MathAbs(price_A - pattern->p5->price);
     double price_B = pattern->is_bullish ? price_A + wave_A_len * 0.5 : price_A - wave_A_len * 0.5;
-    int bar_B = bar_A + (bar_A - p5->bar);
-    datetime time_B = time_A + (time_A - p5->time);
+    int bar_B = bar_A + (bar_A - pattern->p5->bar);
+    datetime time_B = time_A + (time_A - pattern->p5->time);
     pattern->SetPoint(7, bar_B, time_B, price_B);
 
     double price_C = pattern->is_bullish ? price_B - wave_A_len : price_B + wave_A_len;
@@ -405,22 +435,29 @@ void CElliottWaveIndicator::DrawPattern(CWavePattern *pattern)
 {
     if(pattern == NULL) return;
 
+    CPoint *points[9];
+    points[0]=pattern->p0; points[1]=pattern->p1; points[2]=pattern->p2;
+    points[3]=pattern->p3; points[4]=pattern->p4; points[5]=pattern->p5;
+    points[6]=pattern->p6; points[7]=pattern->p7; points[8]=pattern->p8;
+
     string id_str = IntegerToString(pattern->pattern_id);
 
     // Piešiame 5 impulsines bangas
     for(int i = 0; i < 5; i++)
     {
-        if(pattern->points[i] == NULL || pattern->points[i+1] == NULL) continue;
+        if(points[i] == NULL || points[i+1] == NULL) continue;
 
         string name = m_prefix + "Impulse_" + id_str + "_" + IntegerToString(i);
-        ObjectCreate(m_chart_id, name, OBJ_TREND, 0, pattern->points[i]->time, pattern->points[i]->price, pattern->points[i+1]->time, pattern->points[i+1]->price);
+        ObjectCreate(m_chart_id, name, OBJ_TREND, 0, points[i]->time, points[i]->price, points[i+1]->time, points[i+1]->price);
         ObjectSetInteger(m_chart_id, name, OBJPROP_COLOR, InpImpulseColor);
         ObjectSetInteger(m_chart_id, name, OBJPROP_STYLE, InpStyle);
         ObjectSetInteger(m_chart_id, name, OBJPROP_WIDTH, InpWidth);
 
         string label_name = m_prefix + "ImpulseLabel_" + id_str + "_" + IntegerToString(i+1);
-        bool is_peak = ((i+1)%2 != 0) == pattern->is_bullish;
-        ObjectCreate(m_chart_id, label_name, OBJ_TEXT, 0, pattern->points[i+1]->time, pattern->points[i+1]->price);
+        bool is_peak_in_bull = ((i+1)%2 != 0);
+        bool is_peak = (is_peak_in_bull == pattern->is_bullish);
+
+        ObjectCreate(m_chart_id, label_name, OBJ_TEXT, 0, points[i+1]->time, points[i+1]->price);
         ObjectSetString(m_chart_id, label_name, OBJPROP_TEXT, IntegerToString(i+1));
         ObjectSetInteger(m_chart_id, label_name, OBJPROP_COLOR, InpImpulseColor);
         ObjectSetInteger(m_chart_id, label_name, OBJPROP_ANCHOR, is_peak ? ANCHOR_TOP : ANCHOR_BOTTOM);
@@ -430,21 +467,22 @@ void CElliottWaveIndicator::DrawPattern(CWavePattern *pattern)
     string abc[] = {"A", "B", "C"};
     for(int i = 5; i < 8; i++)
     {
-        if(pattern->points[i] == NULL || pattern->points[i+1] == NULL) continue;
+        CPoint *start_point = points[i];
+        CPoint *end_point = points[i+1];
+        if(start_point == NULL || end_point == NULL) continue;
 
         string name = m_prefix + "Correction_" + id_str + "_" + abc[i-5];
-        ObjectCreate(m_chart_id, name, OBJ_TREND, 0, pattern->points[i]->time, pattern->points[i]->price, pattern->points[i+1]->time, pattern->points[i+1]->price);
+        ObjectCreate(m_chart_id, name, OBJ_TREND, 0, start_point->time, start_point->price, end_point->time, end_point->price);
         ObjectSetInteger(m_chart_id, name, OBJPROP_COLOR, InpCorrectionColor);
         ObjectSetInteger(m_chart_id, name, OBJPROP_STYLE, STYLE_DOT);
         ObjectSetInteger(m_chart_id, name, OBJPROP_WIDTH, InpWidth);
 
         string label_name = m_prefix + "CorrectionLabel_" + id_str + "_" + abc[i-5];
         bool is_peak;
-        // B taškas (i=6) yra pikas bulių trende, C ir A (i=5,7) - dugnai
         if(i == 6) is_peak = pattern->is_bullish;
         else is_peak = !pattern->is_bullish;
 
-        ObjectCreate(m_chart_id, label_name, OBJ_TEXT, 0, pattern->points[i+1]->time, pattern->points[i+1]->price);
+        ObjectCreate(m_chart_id, label_name, OBJ_TEXT, 0, end_point->time, end_point->price);
         ObjectSetString(m_chart_id, label_name, OBJPROP_TEXT, abc[i-5]);
         ObjectSetInteger(m_chart_id, label_name, OBJPROP_COLOR, InpCorrectionColor);
         ObjectSetInteger(m_chart_id, label_name, OBJPROP_ANCHOR, is_peak ? ANCHOR_TOP : ANCHOR_BOTTOM);
